@@ -2,7 +2,7 @@
 
 # shellcheck disable=SC2034	# foo appears unused. Verify it or export it.
 
-START=25
+START=14
 STOP=99
 
 MSTPCTL="/usr/sbin/mstpctl"

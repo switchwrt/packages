@@ -1,0 +1,63 @@
+From db88369ae25409ca564b37129198d52bb1c9b607 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Pavel=20=C5=A0imerda?= <code@simerda.eu>
+Date: Sun, 7 Feb 2021 23:16:09 +0100
+Subject: [PATCH] teamd: always set orig_hwaddr_len when changed
+
+The current code checks for the absence of master ifindex. As a result,
+teamd doesn't fill the `orig_hwaddr_len` field when the device was
+already enslaved (e.g. to a bridge) and later fails the interface with
+the following error.
+
+    lan1: Port original hardware address has different length (0) than team device has (6).
+
+The use case is to boot up with all DSA switch ports enslaved to a
+bridge and then configure the team device like in the following trivial
+test configuration.
+
+    teamd -t tm-lag &
+    for p in lan1 lan2; do
+        teamdctl tm-lag port add $p
+    done
+
+You cannot work around the issue by releasing the port from the bridge
+just before adding it to the team device.
+
+    teamd -t tm-lag &
+    # Now `orig_hwaddr_len` is 0 for both lan1 and lan2.
+    for p in lan1 lan2; do
+        ip link set $p nomaster
+        # This was too late.
+        teamdctl tm-lag port add $p
+        # This failed.
+    done
+
+The issue persists as long as the original teamd instance is running.
+---
+ libteam/ifinfo.c | 6 ++----
+ 1 file changed, 2 insertions(+), 4 deletions(-)
+
+diff --git a/libteam/ifinfo.c b/libteam/ifinfo.c
+index a15788b..e48193e 100644
+--- a/libteam/ifinfo.c
++++ b/libteam/ifinfo.c
+@@ -109,15 +109,13 @@ static void update_hwaddr(struct team_ifinfo *ifinfo, struct rtnl_link *link)
+ 	hwaddr_len = nl_addr_get_len(nl_addr);
+ 	if (ifinfo->hwaddr_len != hwaddr_len) {
+ 		ifinfo->hwaddr_len = hwaddr_len;
+-		if (!ifinfo->master_ifindex)
+-			ifinfo->orig_hwaddr_len = hwaddr_len;
++		ifinfo->orig_hwaddr_len = hwaddr_len;
+ 		set_changed(ifinfo, CHANGED_HWADDR_LEN);
+ 	}
+ 	hwaddr = nl_addr_get_binary_addr(nl_addr);
+ 	if (memcmp(ifinfo->hwaddr, hwaddr, hwaddr_len)) {
+ 		memcpy(ifinfo->hwaddr, hwaddr, hwaddr_len);
+-		if (!ifinfo->master_ifindex)
+-			memcpy(ifinfo->orig_hwaddr, hwaddr, hwaddr_len);
++		memcpy(ifinfo->orig_hwaddr, hwaddr, hwaddr_len);
+ 		set_changed(ifinfo, CHANGED_HWADDR);
+ 	}
+ }
+-- 
+2.30.0
+
